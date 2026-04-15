@@ -1,0 +1,83 @@
+if [ -e /dev/vtbd0 ]; then
+  PARTITIONS=vtbd0
+elif [ -e /dev/ada0 ]; then
+  PARTITIONS=ada0
+elif [ -e /dev/da0 ]; then
+  PARTITIONS=da0
+else
+  echo "ERROR: There is no disk available for installation" >&2
+  exit 1
+fi
+
+DISTRIBUTIONS='kernel.txz base.txz'
+HOSTNAME=midnightbsd
+
+#!/bin/sh
+
+set -exu
+
+configure_network() {
+cat <<EOF > /etc/resolv.conf
+nameserver 8.8.8.8
+EOF
+
+sysrc ifconfig_DEFAULT=DHCP
+sysrc sshd_enable=YES
+}
+
+configure_ssh() {
+  tee -a /etc/ssh/sshd_config <<EOF
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords yes
+UseDNS no
+AcceptEnv *
+EOF
+
+  # Allow PAM to accept empty passwords for SSH.
+  # The sshd PAM config may define pam_unix.so directly or include it
+  # from the system PAM config, so add nullok to both.
+  for f in /etc/pam.d/sshd /etc/pam.d/system; do
+    if [ -f "$f" ]; then
+      sed -i '' '/^auth/s/pam_unix.so/pam_unix.so nullok/' "$f"
+    fi
+  done
+}
+
+configure_root_user() {
+  echo "$ROOT_PASSWORD" | pw usermod root -h 0
+}
+
+configure_timezone() {
+  /bin/cp /usr/share/zoneinfo/UTC /etc/localtime
+  /usr/bin/touch /etc/wall_cmos_clock
+  /sbin/adjkerntz -a
+}
+
+configure_ntpd() {
+  sysrc ntpd_enable=YES
+}
+
+set_hostname() {
+  sysrc hostname='runnervmg1sw1.local'
+}
+
+disable_firstboot() {
+  # bsdinstall creates /firstboot AFTER this script runs, so we can't just
+  # remove it here. Instead, disable all firstboot rc scripts by removing
+  # their execute permission.
+  for f in /etc/rc.d/*firstboot* /usr/local/etc/rc.d/*firstboot*; do
+    if [ -f "$f" ]; then
+      chmod -x "$f"
+    fi
+  done
+}
+
+configure_network
+configure_ssh
+configure_root_user
+configure_timezone
+configure_ntpd
+set_hostname
+disable_firstboot
+reboot
